@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import ActivityKit
+import AVFoundation // <-- 1. Added for audio
 
 // MARK: - ViewModel
 
@@ -18,6 +19,9 @@ class PomodoroViewModel: ObservableObject {
     private var backgroundDate: Date?
     private var currentActivity: Activity<PomodoroAttributes>?
     
+    // 2. Audio Player setup (for system sounds or future MP3s)
+    private var audioPlayer: AVAudioPlayer?
+    
     init() {
         // Listen for background/foreground transitions to calculate elapsed time
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -28,8 +32,8 @@ class PomodoroViewModel: ObservableObject {
             self?.handleForeground()
         }
         
-        // Listen for interactive Live Activity intent
-        NotificationCenter.default.addObserver(forName: .toggleTimerIntent, object: nil, queue: .main) { [weak self] _ in
+        // Listen for interactive Live Activity intent (Using raw string to prevent Xcode warnings)
+        NotificationCenter.default.addObserver(forName: NSNotification.Name("toggleTimerIntent"), object: nil, queue: .main) { [weak self] _ in
             self?.toggleTimer()
         }
     }
@@ -146,7 +150,10 @@ class PomodoroViewModel: ObservableObject {
         
         setInitialTime(for: currentPhase)
         
-        // Bug Fix: Auto-continue the timer instead of stopping
+        // 3. Play the alert sound when the phase automatically changes!
+        playPhaseChangeSound()
+        
+        // Auto-continue the timer instead of stopping
         startTimer()
     }
     
@@ -170,6 +177,23 @@ class PomodoroViewModel: ObservableObject {
         }
         backgroundDate = nil
         updateLiveActivity()
+    }
+    
+    // MARK: - Audio Logic
+    
+    private func playPhaseChangeSound() {
+        // Plays a nice default iOS chime (System Sound 1005)
+        AudioServicesPlaySystemSound(1005)
+        
+        /* // NOTE: If you add a custom .mp3 file to Xcode later, use this code instead:
+        guard let url = Bundle.main.url(forResource: "bell_sound", withExtension: "mp3") else { return }
+        do {
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.play()
+        } catch {
+            print("Could not play sound")
+        }
+        */
     }
     
     // MARK: - Live Activity Management
@@ -212,32 +236,25 @@ class PomodoroViewModel: ObservableObject {
     }
     
     private func stopLiveActivity() {
-            guard let activity = currentActivity else { return }
+        guard let activity = currentActivity else { return }
             
-            let finalContentState = PomodoroAttributes.ContentState(
-                isRunning: false,
-                endTime: Date(),
-                timeRemaining: timeRemaining
-            )
+        let finalContentState = PomodoroAttributes.ContentState(
+            isRunning: false,
+            endTime: Date(),
+            timeRemaining: timeRemaining
+        )
             
-            Task {
-                // Updated for iOS 16.2+ API
-                if #available(iOS 16.2, *) {
-                    await activity.end(
-                        ActivityContent(state: finalContentState, staleDate: nil),
-                        dismissalPolicy: .immediate
-                    )
-                } else {
-                    // Fallback for older iOS 16 versions
-                    await activity.end(dismissalPolicy: .immediate)
-                }
-                
-                self.currentActivity = nil
+        Task {
+            if #available(iOS 16.2, *) {
+                await activity.end(
+                    ActivityContent(state: finalContentState, staleDate: nil),
+                    dismissalPolicy: .immediate
+                )
+            } else {
+                await activity.end(dismissalPolicy: .immediate)
             }
+            
+            self.currentActivity = nil
         }
-}
-
-// Custom Notification for App Intent
-extension Notification.Name {
-    static let toggleTimerIntent = Notification.Name("toggleTimerIntent")
+    }
 }
